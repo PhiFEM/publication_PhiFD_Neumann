@@ -11,37 +11,13 @@ To use our latest $\varphi$-FEM code please refer to the [phiFEM repository](htt
 
 ### Prerequisites
 
-- [Git](https://git-scm.com/),
-- [Docker](https://www.docker.com/)/[podman](https://podman.io/).
+- numpy
+- scipy
 
-The image is based on the legacy FEniCS image: quay.io/fenicsproject/stable:latest and the [`seaborn`](https://seaborn.pydata.org/) python library.
-
-### Install the image and launch the container
-
-1) Clone this repository in a dedicated directory:
-   
-   ```bash
-   mkdir phifd/
-   git clone https://github.com/PhiFEM/publication_PhiFD.git phifd
-   ```
-
-2) Download the images from the docker.io registry, in the main directory:
-   
-   ```bash
-   export CONTAINER_ENGINE=docker
-   cd phifd
-   sudo -E bash pull-image.sh
-   ```
-
-3) Launch the container:
-
-   ```bash
-   sudo -E bash run-image.sh
-   ```
 
 ### Example of usage
 
-From the main directory `phifd`, launch the $\varphi$-FD example:
+From the main director, launch the $\varphi$-FD example:
 
 ```bash
 python3 phiFD_Neumann.py
