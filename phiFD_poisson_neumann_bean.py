@@ -24,8 +24,11 @@ from levelset import make_phi
 K = np.pi / 0.8                                   # same wavelength as elasticity
 
 
-def solve(N, phi_func, alpha=1.0, box=(-1.0, 1.0)):
-    """Pure Neumann scalar Poisson on Omega={phi<0}."""
+def solve(N, phi_func, alpha=1.0, box=(-1.0, 1.0), return_A=False):
+    """Pure Neumann scalar Poisson on Omega={phi<0}.
+    If return_A, return the assembled system matrix (A+B+C) instead of the errors.
+    Omega_h uses the 4-neighborhood (the 5-point Laplacian only needs the
+    horizontal/vertical neighbours); this keeps the system well-conditioned."""
     ue = lambda x, y: np.sin(K*x) * np.cos(K*y)
     f  = lambda x, y: (2*K*K + alpha) * ue(x, y)  # -Delta u + alpha u
     a, b = box
@@ -106,10 +109,17 @@ def solve(N, phi_func, alpha=1.0, box=(-1.0, 1.0)):
         ddx_bdf(eq, i, j, i0, j0, -phi_in * dfx[j, i])
         ddy_bdf(eq, i, j, i0, j0, -phi_in * dfy[j, i])
 
-    C = sp.coo_array((coef, (row, col)), shape=(Ndof, Ndof)).tocsr() / h**3
-    rhs = rhs + rhs_bdr / h**3
+    # The Neumann relaxation rows are scaled by h^-4 so that they balance the
+    # interior Laplacian (~ h^-2). This makes the whole system well-conditioned,
+    # kappa = O(h^-2), without any preconditioner. The scaling does not change
+    # the solution (the boundary rows are imposed as LHS = RHS).
+    C = sp.coo_array((coef, (row, col)), shape=(Ndof, Ndof)).tocsr() / h**4
+    rhs = rhs + rhs_bdr / h**4
 
-    u = sp.linalg.spsolve((A + B + C).tocsr(), rhs).reshape(N+1, N+1)
+    M = (A + B + C).tocsr()
+    if return_A:
+        return M
+    u = sp.linalg.spsolve(M, rhs).reshape(N+1, N+1)
 
     # relative L2, H1 (semi-norm, edge-based), Linf errors over domain nodes
     w     = 1 - indOut
