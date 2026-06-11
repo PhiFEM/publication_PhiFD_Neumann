@@ -17,7 +17,7 @@ from levelset import make_phi
 K   = np.pi / 0.8                       # fixed wavelength (independent of geometry)
 
 
-def solve(N, phi_func, lam=1.0, mu=1.0, alpha=1.0, dirichlet_crit=None):
+def solve(N, phi_func, lam=1.0, mu=1.0, alpha=1.0, dirichlet_crit=None, return_A=False):
     """
     Solve the linear elasticity Neumann-Dirichlet mixed problem on Ω = {φ < 0}.
 
@@ -207,15 +207,20 @@ def solve(N, phi_func, lam=1.0, mu=1.0, alpha=1.0, dirichlet_crit=None):
             add_dy_bdf(eq+Ndof, i,j,i0,j0, -phi_in*(lam+2*mu)*dfy[j,i], Ndof)
 
     # Assemble C = C_dir (O(1)) + C_neu (/h³)
+    # The Neumann relaxation rows are scaled by h^-4 to balance the interior
+    # operator (~ h^-2); this does not change the solution.
     C_dir_block = sp.coo_array((coef_d, (row_d, col_d)), shape=(Ndof, Ndof)).tocsr()
     C_dir = sp.bmat([[C_dir_block, None], [None, C_dir_block]], format='csr')
-    C_neu = sp.coo_array((coef_n, (row_n, col_n)), shape=(2*Ndof, 2*Ndof)).tocsr() / h**3
+    C_neu = sp.coo_array((coef_n, (row_n, col_n)), shape=(2*Ndof, 2*Ndof)).tocsr() / h**4
     C = C_dir + C_neu
 
-    rhs = np.concatenate([rhs1, rhs2]) + rhs_bdr / h**3
+    rhs = np.concatenate([rhs1, rhs2]) + rhs_bdr / h**4
 
     # 8) Linear solve
-    u_vec = sp.linalg.spsolve((A + B + C).tocsr(), rhs)
+    M = (A + B + C).tocsr()
+    if return_A:
+        return M
+    u_vec = sp.linalg.spsolve(M, rhs)
     u1h   = u_vec[:Ndof].reshape(N+1, N+1)
     u2h   = u_vec[Ndof:].reshape(N+1, N+1)
 
