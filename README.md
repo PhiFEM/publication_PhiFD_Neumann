@@ -20,7 +20,7 @@ To use our latest $\varphi$-FEM code please refer to the [phiFEM repository](htt
 From the main director, launch the $\varphi$-FD example:
 
 ```bash
-python3 phiFD_Neumann.py
+python3 phiFD_poisson_neumann_bean.py
 ```
 
 ## Issues and support
@@ -32,4 +32,5 @@ Please use the issue tracker to report any issues.
 [Michel Duprez](https://michelduprez.fr/), Inria Nancy Grand-Est  
 [Vanessa Lleras](https://vanessalleras.wixsite.com/lleras), Université de Montpellier  
 [Alexei Lozinski](https://orcid.org/0000-0003-0745-0365), Université de Franche-Comté  
+[Vincent Vigon](https://irma.math.unistra.fr/~vigon/), Université de Strasbourg
 [Lisl Weynans](https://www.math.u-bordeaux.fr/~lweynans/), Université de Bordeaux
