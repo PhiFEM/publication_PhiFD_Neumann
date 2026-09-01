@@ -57,7 +57,9 @@ def run(n_geom=240, Rmin=0.40, Rmax=0.60):
             s = smallest_cut(phi)
             if not (SMIN <= s <= SMAX):           # skip exact-alignment / large
                 continue
-            eL2 = solve(N, phi)[0]
+            # explicit legacy variant, so that sensitivity_cutcell.dat stays
+            # exactly the data plotted in the article (full marks of panel (a))
+            eL2 = solve(N, phi, row_scaling="h4", alpha0_rule="nearest")[0]
         except Exception as exc:                  # degenerate geometry -> skip
             print(f"{Rb:8.4f}  skipped ({exc})")
             continue

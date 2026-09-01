@@ -11,7 +11,6 @@ producing a gentle concavity at the bottom.
 Omega = { phi < 0 }.
 """
 
-import numpy as np
 
 
 def make_phi(Rb=0.5):

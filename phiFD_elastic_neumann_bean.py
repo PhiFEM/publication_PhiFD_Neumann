@@ -33,18 +33,33 @@ phiFD_poisson_neumann_bean.py.
 import numpy as np
 import scipy.sparse as sp
 from levelset import make_phi
+from phiFD_poisson_neumann_bean import _stabilization
 
 K = np.pi / 0.8                         # fixed wavelength (independent of geometry)
 
 
-def solve(N, phi_func, lam=1.0, mu=1.0, alpha=1.0, box=(-1.0, 1.0), return_A=False):
+def solve(N, phi_func, lam=1.0, mu=1.0, alpha=1.0, box=(-1.0, 1.0),
+          return_A=False, solution="divfree",
+          row_scaling="norm", alpha0_rule="safe", alpha0_tol=0.1,
+          sigma=0.0, stab_order=2, stab_rows="all"):
     """Pure Neumann linear elasticity on Omega = {phi < 0}.
     If return_A, return the assembled system matrix instead of the errors."""
-    ue1 = lambda x, y:  np.cos(K*x) * np.sin(K*y)
-    ue2 = lambda x, y: -np.sin(K*x) * np.cos(K*y)
-    c_f = 2*mu*K*K + alpha
-    f1  = lambda x, y: c_f * ue1(x, y)
-    f2  = lambda x, y: c_f * ue2(x, y)
+    # Two manufactured solutions, both eigenfunctions of the Navier operator:
+    #  "divfree" : u = ( cos Kx sin Ky, -sin Kx cos Ky), div u = 0, so the
+    #              dilational term lam*(div u)I never acts and lam drops out of
+    #              the right-hand side (c_f = 2 mu K^2 + alpha).
+    #  "article" : u = ( sin Kx cos Ky,  cos Kx sin Ky), div u = 2K cos Kx cos Ky,
+    #              so lam is genuinely exercised (c_f = (2 lam + 4 mu) K^2 + alpha).
+    if solution == "article":
+        ue1 = lambda x, y: np.sin(K*x) * np.cos(K*y)
+        ue2 = lambda x, y: np.cos(K*x) * np.sin(K*y)
+        c_f = (2*lam + 4*mu)*K*K + alpha
+    else:
+        ue1 = lambda x, y:  np.cos(K*x) * np.sin(K*y)
+        ue2 = lambda x, y: -np.sin(K*x) * np.cos(K*y)
+        c_f = 2*mu*K*K + alpha
+    f1 = lambda x, y: c_f * ue1(x, y)
+    f2 = lambda x, y: c_f * ue2(x, y)
 
     a, b = box
     x    = np.linspace(a, b, N+1)
@@ -56,12 +71,12 @@ def solve(N, phi_func, lam=1.0, mu=1.0, alpha=1.0, box=(-1.0, 1.0), return_A=Fal
     f2ij  = f2(X, Y)
     dfx = np.zeros_like(phiij); dfx[:, 1:-1] = phiij[:, 2:] - phiij[:, :-2]
     dfy = np.zeros_like(phiij); dfy[1:-1, :] = phiij[2:, :] - phiij[:-2, :]
-    ind    = (phiij < 0).astype(int)
-    indOut = 1 - ind
+    ind    = (phiij < 0).astype(float)
+    indOut = 1.0 - ind
 
     # 1D finite difference operators
-    D2_1d = sp.diags([-1, 2, -1], [-1, 0, 1], shape=(N+1, N+1)) / h**2
-    D1_1d = sp.diags([-1, 0,  1], [-1, 0, 1], shape=(N+1, N+1)) / (2*h)
+    D2_1d = sp.diags([-1.0, 2.0, -1.0], [-1, 0, 1], shape=(N+1, N+1)) / h**2
+    D1_1d = sp.diags([-1.0, 0.0, 1.0], [-1, 0, 1], shape=(N+1, N+1)) / (2*h)
 
     # 2D elastic stiffness (interior nodes only)
     I_N  = sp.eye(N+1)
@@ -94,6 +109,7 @@ def solve(N, phi_func, lam=1.0, mu=1.0, alpha=1.0, box=(-1.0, 1.0), return_A=Fal
         indOut[j2v[mk], i2v[mk]] = 0
 
     B_block = sp.diags(indOut.ravel())
+    w_h = 1 - indOut                              # mask of Omega_h (in + boundary)
     B = sp.bmat([[B_block, None], [None, B_block]], format='csr')
 
     # boundary nodes and nearest interior neighbors
@@ -105,7 +121,12 @@ def solve(N, phi_func, lam=1.0, mu=1.0, alpha=1.0, box=(-1.0, 1.0), return_A=Fal
     J0 = J[None, :] + dirs[:, 0, None]
     dots = (X[J0, I0] - X[J, I])**2 + (Y[J0, I0] - Y[J, I])**2
     dots = np.where(ind[J0, I0], dots, np.inf)
-    best = np.argmin(dots, axis=0)
+    if alpha0_rule == "safe":                     # see the scalar solver
+        ok = np.abs(phiij[J0, I0]) >= alpha0_tol * h
+        safe = np.where(ok, dots, np.inf)
+        best = np.argmin(np.where(np.isfinite(safe).any(axis=0), safe, dots), axis=0)
+    else:
+        best = np.argmin(dots, axis=0)
     I0b  = I0[best, np.arange(len(I))]
     J0b  = J0[best, np.arange(len(J))]
 
@@ -185,10 +206,28 @@ def solve(N, phi_func, lam=1.0, mu=1.0, alpha=1.0, box=(-1.0, 1.0), return_A=Fal
 
     # The Neumann relaxation rows are scaled by h^-4 to balance the interior
     # operator (~ h^-2); this does not change the solution.
-    C = sp.coo_array((coef_n, (row_n, col_n)), shape=(2*Ndof, 2*Ndof)).tocsr() / h**4
-    rhs = np.concatenate([rhs1, rhs2]) + rhs_bdr / h**4
+    C = sp.coo_array((coef_n, (row_n, col_n)), shape=(2*Ndof, 2*Ndof)).tocsr()
+    scal = np.full(2*Ndof, 1.0 / h**4)
+    if row_scaling == "norm":                     # see the scalar solver
+        nrm = abs(C).max(axis=1).toarray().ravel()
+        eqs = I + (N+1)*J
+        eqs = np.concatenate([eqs, eqs + Ndof])
+        scal[eqs] = 1.0 / (h**2 * np.maximum(nrm[eqs], 1e-300))
+    C   = sp.diags(scal) @ C
+    rhs = np.concatenate([rhs1, rhs2]) + scal * rhs_bdr
 
-    M = (A + B + C).tocsr()
+    # Ghost-penalty stabilization, applied componentwise (block diagonal): the
+    # term is scalar and acts on u1 and u2 separately. Same parameters and same
+    # index set as in the scalar case; note that Omega_h is larger here, since
+    # the diagonal nodes needed by the mixed-derivative stencil belong to it.
+    if sigma > 0.0:
+        S1 = _stabilization(N, h, w_h, ind, sigma, stab_order)
+        if stab_rows == "interior":
+            S1 = sp.diags(ind.ravel()) @ S1
+        S = sp.bmat([[S1, None], [None, S1]], format='csr')
+        M = (A + B + C + S).tocsr()
+    else:
+        M = (A + B + C).tocsr()
     if return_A:
         return M
     u_vec = sp.linalg.spsolve(M, rhs)
@@ -196,7 +235,7 @@ def solve(N, phi_func, lam=1.0, mu=1.0, alpha=1.0, box=(-1.0, 1.0), return_A=Fal
     u2h   = u_vec[Ndof:].reshape(N+1, N+1)
 
     # relative L2, H1 (semi-norm) and Linf errors over the domain nodes
-    w      = 1 - indOut
+    w      = w_h
     ue1ij  = ue1_flat.reshape(N+1, N+1)
     ue2ij  = ue2_flat.reshape(N+1, N+1)
     e1, e2 = u1h - ue1ij, u2h - ue2ij

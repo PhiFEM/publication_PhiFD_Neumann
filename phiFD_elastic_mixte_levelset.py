@@ -17,7 +17,8 @@ from levelset import make_phi
 K   = np.pi / 0.8                       # fixed wavelength (independent of geometry)
 
 
-def solve(N, phi_func, lam=1.0, mu=1.0, alpha=1.0, dirichlet_crit=None, return_A=False):
+def solve(N, phi_func, lam=1.0, mu=1.0, alpha=1.0, dirichlet_crit=None,
+          return_A=False, row_scaling="norm", alpha0_rule="nearest", alpha0_tol=0.1):
     """
     Solve the linear elasticity Neumann-Dirichlet mixed problem on Ω = {φ < 0}.
 
@@ -48,12 +49,12 @@ def solve(N, phi_func, lam=1.0, mu=1.0, alpha=1.0, dirichlet_crit=None, return_A
     f2ij       = f2(X, Y)
     dfx = np.zeros_like(phiij); dfx[:,1:-1] = phiij[:,2:] - phiij[:,:-2]
     dfy = np.zeros_like(phiij); dfy[1:-1,:] = phiij[2:,:] - phiij[:-2,:]
-    ind    = (phiij < 0).astype(int)
-    indOut = 1 - ind
+    ind    = (phiij < 0).astype(float)
+    indOut = 1.0 - ind
 
     # 3) 1D finite difference operators
-    D2_1d = sp.diags([-1, 2, -1], [-1, 0, 1], shape=(N+1, N+1)) / h**2
-    D1_1d = sp.diags([-1, 0,  1], [-1, 0, 1], shape=(N+1, N+1)) / (2*h)
+    D2_1d = sp.diags([-1.0, 2.0, -1.0], [-1, 0, 1], shape=(N+1, N+1)) / h**2
+    D1_1d = sp.diags([-1.0, 0.0, 1.0], [-1, 0, 1], shape=(N+1, N+1)) / (2*h)
 
     # 4) 2D elastic stiffness (interior nodes only)
     I_N  = sp.eye(N+1)
@@ -97,7 +98,18 @@ def solve(N, phi_func, lam=1.0, mu=1.0, alpha=1.0, dirichlet_crit=None, return_A
     J0 = J[None,:] + dirs[:,0,None]
     dots = (X[J0,I0] - X[J,I])**2 + (Y[J0,I0] - Y[J,I])**2
     dots = np.where(ind[J0, I0], dots, np.inf)
-    best = np.argmin(dots, axis=0)
+    # alpha0_rule="safe" (see phiFD_poisson_neumann_bean) is specific to the
+    # Neumann relaxation and is OFF by default here: the Dirichlet relaxation
+    # rests on u ~ phi*p, whose accuracy degrades directly when x_alpha0 is
+    # pushed away from x_alpha (a factor 5 to 13 on the errors of the pure
+    # Dirichlet and mixed cases below), whereas the Neumann one only needs
+    # ||x_alpha - x_alpha0|| = O(h).
+    if alpha0_rule == "safe":
+        ok   = np.abs(phiij[J0, I0]) >= alpha0_tol * h
+        safe = np.where(ok, dots, np.inf)
+        best = np.argmin(np.where(np.isfinite(safe).any(axis=0), safe, dots), axis=0)
+    else:
+        best = np.argmin(dots, axis=0)
     I0b  = I0[best, np.arange(len(I))]
     J0b  = J0[best, np.arange(len(J))]
 
@@ -206,15 +218,23 @@ def solve(N, phi_func, lam=1.0, mu=1.0, alpha=1.0, dirichlet_crit=None, return_A
             add_dx_bdf(eq+Ndof, i,j,i0,j0, -phi_in*lam        *dfy[j,i], 0)
             add_dy_bdf(eq+Ndof, i,j,i0,j0, -phi_in*(lam+2*mu)*dfy[j,i], Ndof)
 
-    # Assemble C = C_dir (O(1)) + C_neu (/h³)
-    # The Neumann relaxation rows are scaled by h^-4 to balance the interior
-    # operator (~ h^-2); this does not change the solution.
+    # Assemble C = C_dir (O(1)) + C_neu. Each Neumann relaxation row is
+    # normalized by its own sup-norm and brought to the h^-2 magnitude of the
+    # interior operator (row_scaling="norm", the default); row_scaling="h4"
+    # restores the uniform h^-4 factor. Being a row scaling, neither changes
+    # the solution.
     C_dir_block = sp.coo_array((coef_d, (row_d, col_d)), shape=(Ndof, Ndof)).tocsr()
     C_dir = sp.bmat([[C_dir_block, None], [None, C_dir_block]], format='csr')
-    C_neu = sp.coo_array((coef_n, (row_n, col_n)), shape=(2*Ndof, 2*Ndof)).tocsr() / h**4
+    C_neu = sp.coo_array((coef_n, (row_n, col_n)), shape=(2*Ndof, 2*Ndof)).tocsr()
+    scal  = np.full(2*Ndof, 1.0 / h**4)
+    if row_scaling == "norm":                     # see phiFD_poisson_neumann_bean
+        nrm = abs(C_neu).max(axis=1).toarray().ravel()
+        nz  = nrm > 0.0                           # rows carrying a Neumann equation
+        scal[nz] = 1.0 / (h**2 * nrm[nz])
+    C_neu = sp.diags(scal) @ C_neu
     C = C_dir + C_neu
 
-    rhs = np.concatenate([rhs1, rhs2]) + rhs_bdr / h**4
+    rhs = np.concatenate([rhs1, rhs2]) + scal * rhs_bdr
 
     # 8) Linear solve
     M = (A + B + C).tocsr()
