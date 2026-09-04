@@ -142,13 +142,31 @@ def grad_h(v, ind, indOut, a0, h):
 
 def solve(N, phi_func, alpha=1.0, box=(-1.0, 1.0), return_A=False,
           row_scaling="norm", alpha0_rule="safe", alpha0_tol=0.1,
-          sigma=0.0, stab_order=2, stab_rows="all", return_fields=False):
+          alpha0_dirs=8, grad_a0="centered",
+          sigma=0.0, stab_order=2, stab_rows="all", return_fields=False,
+          bc_data="neumann"):
     """Pure Neumann scalar Poisson on Omega={phi<0}.
     If return_A, return the assembled system matrix (A+B+C) instead of the errors.
     Omega_h uses the 4-neighborhood (the 5-point Laplacian only needs the
-    horizontal/vertical neighbours); this keeps the system well-conditioned."""
+    horizontal/vertical neighbours); this keeps the system well-conditioned.
+
+    bc_data selects the right-hand side of the Neumann relaxation rows:
+      "neumann" (default) uses the data itself, G = g |grad phi| = grad u.grad phi,
+                as in equation (5) of the article:
+                    rhs_alpha = phi_alpha G_{alpha_0} - phi_{alpha_0} G_alpha .
+                This is what a user can assemble knowing only g, and it carries
+                the O(h^3) consistency error of the relaxation.
+      "exact"   uses (row).u_exact instead, which makes the boundary rows
+                exactly satisfied by the exact solution. Convenient to isolate
+                the interior truncation error -- the boundary contribution to
+                the error is then identically zero -- but it is not an
+                implementable scheme. Kept for the stability experiments.
+    """
     ue = lambda x, y: np.sin(K*x) * np.cos(K*y)
     f  = lambda x, y: (2*K*K + alpha) * ue(x, y)  # -Delta u + alpha u
+    # G = g |grad phi| = grad u . grad phi, the Neumann data of the relaxation
+    uex = lambda x, y:  K*np.cos(K*x)*np.cos(K*y)
+    uey = lambda x, y: -K*np.sin(K*x)*np.sin(K*y)
     a, b = box
     x    = np.linspace(a, b, N+1)
     h    = x[1] - x[0]
@@ -178,12 +196,47 @@ def solve(N, phi_func, alpha=1.0, box=(-1.0, 1.0), return_A=False,
 
     # boundary nodes and nearest interior neighbors
     J, I = np.where(ind + indOut == 0)
-    dirs = np.array([[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]])
+    # alpha0_dirs=4 restricts the coupled node to an axis neighbour. By the
+    # definition of dOmega_h such a neighbour always exists, and it is what makes
+    # the symmetric part of the boundary block diagonally dominant: the only rows
+    # that fail dominance are those whose alpha0 is diagonal.
+    dirs = np.array([[-1,0],[0,-1],[0,1],[1,0]] if alpha0_dirs == 4 else
+                    [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]])
     I0 = I[None, :] + dirs[:, 1, None]
     J0 = J[None, :] + dirs[:, 0, None]
     dots = (X[J0, I0]-X[J, I])**2 + (Y[J0, I0]-Y[J, I])**2
     dots = np.where(ind[J0, I0], dots, np.inf)
-    if alpha0_rule == "safe":
+    if alpha0_rule == "matched":
+        # Injective choice of alpha_0: each boundary node gets its *own* coupled
+        # interior node, so that no two boundary equations share a x_{alpha_0}.
+        # This is a bipartite assignment, solved here to minimize the total
+        # squared distance, so that ||x_alpha - x_{alpha_0}|| stays as small as
+        # the constraint allows. When it is feasible, every block of the
+        # boundary matrix has size one and block diagonal dominance reduces to
+        # ordinary diagonal dominance.
+        from scipy.optimize import linear_sum_assignment
+        cand = {}
+        for k in range(len(I)):
+            for d_ in range(8):
+                if ind[J0[d_, k], I0[d_, k]] and \
+                   abs(phiij[J0[d_, k], I0[d_, k]]) >= alpha0_tol * h:
+                    cand.setdefault((int(I0[d_, k]), int(J0[d_, k])), len(cand))
+        cols = list(cand)
+        C = np.full((len(I), max(len(cols), len(I))), 1e6)
+        for k in range(len(I)):
+            for d_ in range(8):
+                key = (int(I0[d_, k]), int(J0[d_, k]))
+                if key in cand and ind[key[1], key[0]] and \
+                   abs(phiij[key[1], key[0]]) >= alpha0_tol * h:
+                    C[k, cand[key]] = dots[d_, k]
+        r, c = linear_sum_assignment(C)
+        I0b = np.empty(len(I), dtype=int); J0b = np.empty(len(J), dtype=int)
+        best = np.argmin(np.where(ind[J0, I0], dots, np.inf), axis=0)
+        I0b[:] = I0[best, np.arange(len(I))]; J0b[:] = J0[best, np.arange(len(J))]
+        for k, cc in zip(r, c):
+            if cc < len(cols) and C[k, cc] < 1e5:      # matched
+                I0b[k], J0b[k] = cols[cc]
+    elif alpha0_rule == "safe":
         # Skip interior candidates sitting essentially on Gamma. Such a node has
         # phi_{alpha0} ~ 0, which kills the second bracket of the relaxation; if
         # it is the closest interior node of two boundary nodes, their two
@@ -195,11 +248,15 @@ def solve(N, phi_func, alpha=1.0, box=(-1.0, 1.0), return_A=False,
         best = np.argmin(np.where(np.isfinite(safe).any(axis=0), safe, dots), axis=0)
     else:
         best = np.argmin(dots, axis=0)
-    I0b  = I0[best, np.arange(len(I))]
-    J0b  = J0[best, np.arange(len(J))]
+    if alpha0_rule != "matched":
+        I0b  = I0[best, np.arange(len(I))]
+        J0b  = J0[best, np.arange(len(J))]
 
     rhs     = (ind * fij).ravel().copy()
     ue_flat = ue(X, Y).ravel()
+    _e      = 1e-6
+    Gij     = (uex(X, Y) * (phi_func(X+_e, Y) - phi_func(X-_e, Y)) / (2*_e)
+             + uey(X, Y) * (phi_func(X, Y+_e) - phi_func(X, Y-_e)) / (2*_e))
     row, col, coef = [], [], []
     rhs_bdr = np.zeros(Ndof)
 
@@ -208,7 +265,38 @@ def solve(N, phi_func, alpha=1.0, box=(-1.0, 1.0), return_A=False,
         row.append(eq); col.append(fc); coef.append(a_)
         rhs_bdr[eq] += a_ * ue_flat[fc]
 
+    def ddx_in(eq, i, j, c):
+        """d/dx at an interior node, using interior nodes only where possible."""
+        if ind[j, i+1] and ind[j, i-1]:
+            Add(eq, i+1, j, c); Add(eq, i-1, j, -c)
+        elif ind[j, i+1] and ind[j, i+2]:
+            Add(eq, i, j, -3*c); Add(eq, i+1, j, 4*c); Add(eq, i+2, j, -c)
+        elif ind[j, i-1] and ind[j, i-2]:
+            Add(eq, i, j, 3*c); Add(eq, i-1, j, -4*c); Add(eq, i-2, j, c)
+        else:
+            Add(eq, i+1, j, c); Add(eq, i-1, j, -c)
+
+    def ddy_in(eq, i, j, c):
+        if ind[j+1, i] and ind[j-1, i]:
+            Add(eq, i, j+1, c); Add(eq, i, j-1, -c)
+        elif ind[j+1, i] and ind[j+2, i]:
+            Add(eq, i, j, -3*c); Add(eq, i, j+1, 4*c); Add(eq, i, j+2, -c)
+        elif ind[j-1, i] and ind[j-2, i]:
+            Add(eq, i, j, 3*c); Add(eq, i, j-1, -4*c); Add(eq, i, j-2, c)
+        else:
+            Add(eq, i, j+1, c); Add(eq, i, j-1, -c)
+
     def ddx_bdf(eq, i, j, i0, j0, c):
+        if grad_a0 == "interior":
+            # interior-only stencils: the sole boundary unknown left in the
+            # equation is then u_alpha itself, and B_bb is diagonal
+            if ind[j, i-1] and ind[j, i-2]:
+                Add(eq, i, j, 3*c); Add(eq, i-1, j, -4*c); Add(eq, i-2, j, c)
+                return
+            if ind[j, i+1] and ind[j, i+2]:
+                Add(eq, i, j, -3*c); Add(eq, i+1, j, 4*c); Add(eq, i+2, j, -c)
+                return
+            ddx_in(eq, i0, j0, c); return
         if   indOut[j, i+1]==1 and indOut[j, i-1]!=1 and indOut[j, i-2]!=1:
             Add(eq, i, j, 3*c); Add(eq, i-1, j, -4*c); Add(eq, i-2, j, c)
         elif indOut[j, i-1]==1 and indOut[j, i+1]!=1 and indOut[j, i+2]!=1:
@@ -219,6 +307,14 @@ def solve(N, phi_func, alpha=1.0, box=(-1.0, 1.0), return_A=False,
             Add(eq, i0+1, j0, c); Add(eq, i0-1, j0, -c)
 
     def ddy_bdf(eq, i, j, i0, j0, c):
+        if grad_a0 == "interior":
+            if ind[j-1, i] and ind[j-2, i]:
+                Add(eq, i, j, 3*c); Add(eq, i, j-1, -4*c); Add(eq, i, j-2, c)
+                return
+            if ind[j+1, i] and ind[j+2, i]:
+                Add(eq, i, j, -3*c); Add(eq, i, j+1, 4*c); Add(eq, i, j+2, -c)
+                return
+            ddy_in(eq, i0, j0, c); return
         if   indOut[j+1, i]==1 and indOut[j-1, i]!=1 and indOut[j-2, i]!=1:
             Add(eq, i, j, 3*c); Add(eq, i, j-1, -4*c); Add(eq, i, j-2, c)
         elif indOut[j-1, i]==1 and indOut[j+1, i]!=1 and indOut[j+2, i]!=1:
@@ -234,10 +330,25 @@ def solve(N, phi_func, alpha=1.0, box=(-1.0, 1.0), return_A=False,
         phi_i = phiij[j0, i0]
         # Neumann relaxation: phi_out*(grad u.grad phi)_{i0j0} - phi_in*(...)_{ij}
         phi_out, phi_in = phi_b, phi_i
-        c = phi_out * dfx[j0, i0]; Add(eq, i0+1, j0, c); Add(eq, i0-1, j0, -c)
-        c = phi_out * dfy[j0, i0]; Add(eq, i0, j0+1, c); Add(eq, i0, j0-1, -c)
+        # grad_h u at the coupled node. Centered, it reaches the other
+        # neighbours of x_{alpha_0}, some of which are themselves boundary
+        # nodes: this is what couples the boundary unknowns to each other and
+        # makes B_bb a full block. grad_a0="interior" uses instead the
+        # second-order one-sided stencil pointing away from the boundary, which
+        # touches interior nodes only, so that the sole boundary unknown left in
+        # the equation is u_alpha itself and B_bb becomes diagonal.
+        if grad_a0 == "interior":
+            ddx_in(eq, i0, j0, phi_out * dfx[j0, i0])
+            ddy_in(eq, i0, j0, phi_out * dfy[j0, i0])
+        else:
+            c = phi_out * dfx[j0, i0]; Add(eq, i0+1, j0, c); Add(eq, i0-1, j0, -c)
+            c = phi_out * dfy[j0, i0]; Add(eq, i0, j0+1, c); Add(eq, i0, j0-1, -c)
         ddx_bdf(eq, i, j, i0, j0, -phi_in * dfx[j, i])
         ddy_bdf(eq, i, j, i0, j0, -phi_in * dfy[j, i])
+        if bc_data == "neumann":
+            # every branch above approximates 2h d/d., and dfx, dfy are the
+            # undivided differences 2h dphi/d., hence the factor 4h^2.
+            rhs_bdr[eq] = 4.0 * h * h * (phi_b * Gij[j0, i0] - phi_i * Gij[j, i])
 
     # The Neumann relaxation rows are scaled by h^-4 so that they balance the
     # interior Laplacian (~ h^-2). This makes the whole system well-conditioned,
