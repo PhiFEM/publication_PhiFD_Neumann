@@ -131,3 +131,12 @@ Please use the issue tracker to report any issues.
 [Alexei Lozinski](https://orcid.org/0000-0003-0745-0365), Université de Franche-Comté  
 [Vincent Vigon](https://irma.math.unistra.fr/~vigon/), Université de Strasbourg  
 [Lisl Weynans](https://www.math.u-bordeaux.fr/~lweynans/), Université de Bordeaux
+
+## The short note
+
+The folder `note/` holds the self-contained code of the short-note version of
+this work (scalar Poisson problem, convergence, conditioning versus the smallest
+cut with the two precautions of its Section 2, and the one cut-cell comparison
+it quotes), with its own README. Its solver assembles the right-hand side of the
+boundary rows from the Neumann data alone, `bc_data="neumann"`, i.e. the scheme
+exactly as written in the note.
