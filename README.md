@@ -2,8 +2,7 @@
 
 Code of the short note "$\varphi$-FD, a second order finite difference scheme
 for geometry defined by level-set function: the Neumann case", Michel Duprez,
-Vanessa Lleras, Alexei Lozinski, Vincent Vigon, Lisl Weynans. A longer version
-of this work is available as a [preprint](https://hal.science/hal-04731164).
+Vanessa Lleras, Alexei Lozinski, Vincent Vigon, Lisl Weynans.
 
 Everything reported in the note is here, in plain `NumPy`/`SciPy`
 (`matplotlib` only for the domain figure). Run any script from this directory
