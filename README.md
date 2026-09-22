@@ -24,12 +24,12 @@ domain figure only). Run any script from this directory with `PYTHONPATH=.`.
 
 | what | script | output |
 |---|---|---|
-| Fig. 1(a), bean domain | `plot_bean_domain.py` | `fig_elastic_domains.png` |
+| Fig. 1(a), bean domain (boundary-isolated points in blue) | `plot_bean_domain.py` | `fig_elastic_domains.png` |
 | Fig. 1(b), Poisson convergence | `convergence.py` | `convergence.dat`, pgfplots lines printed |
 | Fig. 2(a)–(b), error and κ vs smallest cut (h⁻⁴ / normalized / both) | `sensitivity_kappa.py` | `sensitivity_kappa.dat`, `.png`, `.log` |
 | Fig. 2(b), α₀ rule alone (h⁻⁴ scaling) | `alpha0_alone.py` | `alpha0_alone.dat`, `.log` |
 | §4, cut-cell numbers over the same sweep | `compare_cutsize.py` | `compare_cutsize.dat`, `.png`, `.log` |
-| §2, count of boundary-isolated points | `isolated_points.py` | printed (none, at N = 20 … 320) |
+| §2, count of boundary-isolated points | `isolated_points.py` | printed (none at N = 20 … 320; two at N = 14, the grid of Fig. 1(a)) |
 
 The scripts print their results as `pgfplots` `coordinates {...}` lists, ready
 to paste into `note_journal.tex`, and save the same numbers as `.dat`.
@@ -41,3 +41,5 @@ alone, and 1.11 (+0.00) with both. The L² error varies by a factor 2.5
 (nearest) or 2.2 (α₀ rule) with no trend (slope +0.03); over the same sweep the
 cut-cell scheme varies by 3.2 in error and 13.8 in κ. Convergence on the bean:
 L² 3.93e-2 … 1.60e-4 for N = 20 … 320, fitted slopes 1.99 / 2.02 / 1.98.
+Condition number vs h (both precautions): κ = 4.6e2, 1.3e3, 4.2e3, 1.5e4 for
+N = 10, 20, 40, 80 (ratios 2.9, 3.2, 3.6), `np.linalg.cond` of `solve(N, phi, return_A=True)`.
