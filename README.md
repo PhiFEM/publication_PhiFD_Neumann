@@ -1,7 +1,7 @@
-# $\varphi$-FD, a second order finite difference scheme for geometry defined by level-set function: the Neumann case
+# $\varphi$-FD, a second order finite difference scheme for geometries defined by a level-set function: the Neumann case
 
 Code of the short note "$\varphi$-FD, a second order finite difference scheme
-for geometry defined by level-set function: the Neumann case", Michel Duprez,
+for geometries defined by a level-set function: the Neumann case", Michel Duprez,
 Vanessa Lleras, Alexei Lozinski, Vincent Vigon, Lisl Weynans.
 
 Everything reported in the note is here, in plain `NumPy`/`SciPy`
